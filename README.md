@@ -193,12 +193,19 @@ edge-tts is exposed to speech-dispatcher as an `sd_generic` module. The module
 receives text on a pipe, hands it to the generated `edge-speak` wrapper, and
 streams raw PCM to the audio player.
 
-Three details were found by testing against speech-dispatcher 0.12.1 rather
+Four details were found by testing against speech-dispatcher 0.12.1 rather
 than assumed, and each one breaks narration if wrong:
 
 - **`$DATA` must be single-quoted** in `GenericExecuteSynth`. The double-quoted
   form mangles apostrophes in article text (`it's` arrives as `it'\''s`) and
   silently strips double quotes.
+- **`GenericMaxChunkLength` must be raised.** `sd_generic` defaults to cutting
+  every 300 bytes — mid-word, with no regard for sentence structure — and
+  synthesizes each piece separately. Firefox sends a whole paragraph as one
+  utterance, so the config raises the limit to 64 KiB and sets
+  `GenericDelimiters "|"` (a character that does not occur in text) to disable
+  delimiter splitting. edge-tts then does its own word-boundary chunking and
+  streams the result.
 - **`GenericDefaultCharset "utf-8"` is required.** Without it, `sd_generic`
   recodes the utterance and every non-Latin character becomes `?` — which
   destroys Bulgarian text entirely.
@@ -227,6 +234,16 @@ grep narrate.voice ~/.mozilla/firefox/*/prefs.js
 ```
 
 Then close Firefox and re-run `--set-firefox-voice`.
+
+**Narration cuts off mid-word or sounds choppy.** The module config was written
+with `sd_generic`'s default 300-byte chunk limit, which splits words and
+synthesizes each fragment separately. Re-run `--install` to regenerate it; the
+generated `edge-tts.conf` should contain:
+
+```sh
+GenericMaxChunkLength 65536
+GenericDelimiters "|"
+```
 
 **Nothing is spoken, or `--test` reports no audio.** Check the network and the
 service:

@@ -9,6 +9,10 @@
 #     wrapped in single quotes: the double-quoted form mangles apostrophes
 #     ("it's" becomes "it'\''s") and strips double quotes from article text.
 #   * Text arrives chunked; the module owns playback via $PLAY_COMMAND.
+#   * sd_generic cuts text at GenericMaxChunkLength (default 300 bytes) and
+#     synthesizes each piece separately, which cuts words and resets prosody.
+#     We raise the limit and disable delimiter splitting so a whole paragraph
+#     reaches edge-tts as one utterance.
 #   * AudioOutputMethod "none" is not usable here (no spd_none.so plugin), so we
 #     keep a working output method and let the module play through $PLAY_COMMAND.
 
@@ -89,6 +93,14 @@ GenericExecuteSynth \
 
 GenericCmdDependency "$EDGE_SPEAK"
 GenericSoundIconFolder "/usr/share/sounds/sound-icons/"
+
+# sd_generic slices the utterance into 300-byte pieces by default and runs the
+# synth command separately for each one -- even mid-word. Firefox sends a whole
+# paragraph as one utterance, so let it through intact: edge-tts already splits
+# long text at word boundaries and streams the audio. "|" is a delimiter that
+# does not occur in normal text; an empty GenericDelimiters triggers a warning.
+GenericMaxChunkLength 65536
+GenericDelimiters "|"
 
 # edge-tts interprets punctuation itself, so pass it all through untouched.
 GenericPunctNone ""
