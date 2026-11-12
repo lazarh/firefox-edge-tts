@@ -77,9 +77,14 @@ text=$(cat) || exit 1
 # An empty utterance is not an error; just produce no audio.
 [ -n "${text//[[:space:]]/}" ] || exit 0
 
+# Ask the warm daemon for MP3. The client starts the daemon on first use and
+# falls back to a one-shot edge-tts invocation if it cannot be reached, so a
+# broken daemon can never leave Firefox silent.
 synthesize() {
     printf '%s' "$text" \
-        | "__EDGE_BIN__" -f - -v "$VOICE" --rate="$rate_arg" --no-progress --write-media - \
+        | "__PYTHON__" "__DAEMON__" --client \
+            --socket "__SOCKET__" --edge-bin "__EDGE_BIN__" \
+            --voice "$VOICE" --rate="$rate_arg" \
         | "__MPG123__" -q -m -r 24000 -s -
 }
 

@@ -93,6 +93,8 @@ Running the script with no arguments prints this help.
 | `~/.local/share/edge-tts/venv/` | Private Python environment holding `edge-tts` |
 | `~/.local/share/edge-tts/bin/edge-tts` | Generated wrapper that execs the venv |
 | `~/.local/share/edge-tts/edge-speak` | Generated bridge: text → edge-tts → mpg123 → pause trim → raw PCM |
+| `~/.local/share/edge-tts/edge-ttsd.py` | Warm-connection daemon (one websocket reused across paragraphs) |
+| `~/.local/share/edge-tts/tts.sock` | Unix socket the bridge uses to reach the daemon |
 | `~/.cache/firefox-edge-tts/voices.json` | Cached voice catalogue |
 | `~/.config/speech-dispatcher/speechd.conf` | Generated main config (prior one backed up) |
 | `~/.config/speech-dispatcher/modules/edge-tts.conf` | Generated `sd_generic` module config |
@@ -127,18 +129,18 @@ Firefox sends each paragraph to speech-dispatcher as a separate utterance and
 starts the next one as soon as the previous `end` event arrives. Neither Firefox
 nor speech-dispatcher has a setting for silence between paragraphs.
 
-The gap you hear is therefore made of two parts:
+The gap you hear is made of two parts:
 
 - **Trailing silence in the audio.** edge-tts normally leaves roughly 0.7–0.9 s
   of silence at the end of every request.
-- **Startup latency for the next paragraph.** speech-dispatcher runs the synth
-  command separately for each utterance, so the next paragraph waits for a new
-  edge-tts process, a new TLS connection, and the first audio chunk — about
-  1–2 s (longer on the first request).
+- **Startup latency for the next paragraph.** A fresh `edge-tts` process needs
+  a new TLS connection and a new request to Microsoft — about 1–2 s. The script
+  now keeps one websocket warm (`edge-ttsd`), so after the first paragraph the
+  next request's first audio arrives in roughly 0.3–0.9 s instead.
 
 `--pause` controls the first part exactly. It trims or pads the end of each
 paragraph to the requested number of milliseconds, while leaving pauses inside
-the paragraph untouched:
+the paragraph untouched. The warm connection handles the second part.
 
 ```sh
 # 250 ms of silence after each paragraph
@@ -157,6 +159,15 @@ the paragraph untouched:
 The value is stored in the install state and survives a later `--install`
 that changes the voice. `--status` shows the current setting.
 
+**The warm connection.** `edge-ttsd` is a small per-user daemon that holds one
+websocket to Microsoft open and answers synthesis requests over a Unix socket.
+Firefox sends one utterance per paragraph, so reusing the connection removes
+the repeated TLS handshake. It starts automatically on the first utterance,
+exits after 10 minutes idle, and is stopped by `--uninstall`. If it cannot
+start or a request fails, `edge-speak` falls back to a one-shot `edge-tts`
+invocation (still Edge TTS, never another engine). Run `--install` once to
+install it; `--set-pause` alone preserves a connection that is already warm.
+
 **Restart Firefox after changing the pause.** `--set-pause` restarts
 speech-dispatcher so it reloads the module config. Firefox opens its
 speech-dispatcher connection once at startup and never reopens it, so an
@@ -164,17 +175,18 @@ already-running Firefox loses Narrate entirely until you close and reopen it.
 The script warns when it detects this. For the smoothest sequence, close
 Firefox first, run `--set-pause`, then reopen Firefox.
 
-`--pause` cannot make the gap shorter than the next request's startup latency.
-Even at `--pause 0`, the next paragraph still starts with roughly a second of
-silence while edge-tts connects and produces its first chunk.
+`--pause` cannot remove the remaining startup latency. Even at `--pause 0`
+with the warm connection, the next paragraph still waits a fraction of a
+second for its first audio chunk. For the shortest gap use `--set-pause 0`;
+use a larger value (e.g. `800`) for a more deliberate break.
 
 ## Latency
 
-The first word arrives after roughly 1 second on a warm connection, and after
-about 2–3 seconds on the first request. This is higher than Piper's ~0.4 s
-model-load time because each utterance starts a new Python process and a new
-request to Microsoft. Streaming is progressive — audio starts before the whole
-clip has arrived — so articles remain usable, but short strings feel slower.
+Once the warm connection is established, a paragraph's audio is ready in
+roughly 0.3–0.9 s; the very first request also starts the daemon and takes
+1–2 s. This is higher than Piper's ~0.4 s model-load time because edge-tts is
+an online service. The bridge buffers each paragraph's MP3 before decoding it,
+so short strings still feel slightly slower than a local engine.
 
 ## Online and privacy caveats
 
@@ -231,6 +243,13 @@ instead, falling back to `paplay` or `aplay`.
 **Decoding.** edge-tts always returns MP3 at 24 kHz mono. `edge-speak` pipes it
 through `mpg123 -m -r 24000 -s`, forcing mono and 24 kHz so the player pipeline
 never has to know about the service's format.
+
+**Warm connection.** A fresh `edge-tts` process costs roughly 1 s of TLS
+handshake before its first audio byte. `edge-ttsd` keeps one websocket open and
+serves every paragraph over a Unix socket — verified with edge-tts 7.3.x,
+whose protocol accepts multiple SSML requests on one connection. It uses
+edge-tts's internal helpers, so it is tied to the installed version; the
+one-shot CLI remains the fallback if it fails.
 
 **Rate.** speech-dispatcher's `-100..100` rate is mapped to edge-tts's
 `[+-]N%`; out-of-range values are clamped. The module config must use
@@ -311,6 +330,11 @@ pauses](#paragraph-pauses).
 commands restart speech-dispatcher, which drops Firefox's existing connection;
 Firefox only reconnects when it starts up. Close and reopen Firefox. To avoid
 the interruption, close Firefox *before* running the command.
+
+**The gap between paragraphs is still long.** Run `--install` once to install
+the warm-connection daemon (`--set-pause` alone does not add it), then use
+`--set-pause 0` for the shortest gap. If the daemon fails, `edge-speak` falls
+back to a one-shot request; check `~/.local/share/edge-tts/tts.sock.log`.
 
 **Nothing is spoken, or `--test` reports no audio.** Check the network and the
 service:
