@@ -130,30 +130,39 @@ list_available_voices() {
 }
 
 # Interactive menu: popular voices first, then freeform catalogue entry.
+#
+# Everything the user should SEE goes to stderr. The caller captures this
+# function's stdout as the chosen voice, so printing the menu there would make
+# the menu itself the "voice name".
 choose_voice_interactively() {
     require_jq
     local idx
     idx=$(voices_index)
 
-    log ""
-    log "Popular Edge TTS voices:"
+    log "" >&2
+    log "Popular Edge TTS voices:" >&2
     local i entry key desc
     i=1
     for entry in "${POPULAR_VOICES[@]}"; do
         key=${entry%%:*}
         desc=${entry#*:}
-        printf '  %2d) %-26s %s\n' "$i" "$key" "$C_DIM$desc$C_OFF"
+        printf '  %2d) %-26s %s\n' "$i" "$key" "$C_DIM$desc$C_OFF" >&2
         i=$((i + 1))
     done
-    printf '  %2d) %-26s %s\n' "$i" "custom" "$C_DIM(type any voice from the catalogue; see --list-voices)$C_OFF"
+    printf '  %2d) %-26s %s\n' "$i" "custom" "$C_DIM(type any voice from the catalogue; see --list-voices)$C_OFF" >&2
+
+    # A newline pressed while the catalogue was downloading is still buffered in
+    # the terminal. Drain pending input so the menu does not auto-answer with the
+    # default before the user has even read it.
+    while IFS= read -r -t 0.05 _ </dev/tty 2>/dev/null; do :; done
 
     local choice
-    printf '\nSelect a voice [1-%d, default 1]: ' "$i"
+    printf '\nSelect a voice [1-%d, default 1]: ' "$i" >&2
     read -r choice </dev/tty || choice=""
     choice=${choice:-1}
 
     if [ "$choice" = "$i" ]; then
-        printf 'Voice name (e.g. bg-BG-BorislavNeural): '
+        printf 'Voice name (e.g. bg-BG-BorislavNeural): ' >&2
         read -r key </dev/tty || die "no voice selected"
         validate_voice_key "$key"
     else

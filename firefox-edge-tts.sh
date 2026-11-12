@@ -84,7 +84,7 @@ do_install() {
     # Voice: explicit flag, else interactive menu, else the documented default.
     if [ -z "$voice" ]; then
         if is_interactive; then
-            voice=$(choose_voice_interactively)
+            voice=$(choose_voice_interactively) || exit 1
         else
             voice="$DEFAULT_VOICE"
             dim "no --voice given and not interactive; using default $voice"
