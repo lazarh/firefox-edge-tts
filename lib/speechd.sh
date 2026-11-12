@@ -47,45 +47,6 @@ detect_play_command() {
     fi
 }
 
-# Per-user Unix socket for the warm edge-tts connection. Kept under EDGE_HOME
-# (not XDG_RUNTIME_DIR) so it survives a speech-dispatcher restart and the warm
-# websocket is not torn down when the pause is changed.
-daemon_socket() { printf '%s/tts.sock' "$EDGE_HOME"; }
-
-# Install the warm-connection daemon. Only rewrite (and only stop a running
-# daemon) when the script actually changed, so `--set-pause` does not discard a
-# connection that is already warm.
-install_daemon() {
-    local src="$SCRIPT_DIR/lib/edge-ttsd.py.in" dst="$EDGE_HOME/edge-ttsd.py" tmp
-    mkdir -p "$EDGE_HOME"
-    if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
-        return 0
-    fi
-    tmp=$(mktemp "$dst.XXXXXX") || die "cannot write to $EDGE_HOME"
-    cp "$src" "$tmp" && chmod +x "$tmp" && mv "$tmp" "$dst" \
-        || { rm -f "$tmp"; die "could not install $dst"; }
-    stop_daemon
-}
-
-# Stop the daemon before replacing its code or uninstalling. Match on the
-# recorded PID and verify it really is our server, never an unrelated process.
-stop_daemon() {
-    local sock pid pid_file waited=0
-    sock=$(daemon_socket)
-    pid_file="$sock.pid"
-    [ -f "$pid_file" ] || return 0
-    pid=$(cat "$pid_file" 2>/dev/null || true)
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
-       && tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q 'edge-ttsd.py --serve'; then
-        kill "$pid" 2>/dev/null || true
-        while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
-            sleep 0.1
-            waited=$((waited + 1))
-        done
-    fi
-    rm -f "$pid_file" "$sock" "$sock.lock" "$sock.log"
-}
-
 # Install the generated edge-speak wrapper, with runtime paths baked in.
 install_speak_wrapper() {
     local mpg123_bin tmp
@@ -97,8 +58,6 @@ install_speak_wrapper() {
     sed -e "s|__EDGE_BIN__|$EDGE_VENV/bin/edge-tts|g" \
         -e "s|__MPG123__|$mpg123_bin|g" \
         -e "s|__PYTHON__|$EDGE_VENV/bin/python|g" \
-        -e "s|__DAEMON__|$EDGE_HOME/edge-ttsd.py|g" \
-        -e "s|__SOCKET__|$(daemon_socket)|g" \
         "$SCRIPT_DIR/lib/edge-speak.sh.in" > "$tmp"
     chmod +x "$tmp"
     mv "$tmp" "$EDGE_SPEAK" || { rm -f "$tmp"; die "could not install $EDGE_SPEAK"; }
@@ -300,7 +259,6 @@ configure_speech_dispatcher() {
 
     info "configuring per-user speech-dispatcher (voice: $voice_key, locale: $locale)"
 
-    install_daemon
     install_speak_wrapper
     play_cmd=$(detect_play_command)
     dim "player: $play_cmd"

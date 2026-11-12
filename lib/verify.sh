@@ -142,14 +142,6 @@ show_status() {
         printf '  %-22s %s\n' "paragraph pause" "${pause} ms after each paragraph"
     fi
 
-    local sock
-    sock=$(daemon_socket 2>/dev/null || true)
-    if [ -n "$sock" ] && [ -S "$sock" ]; then
-        printf '  %-22s %s\n' "warm connection" "$(printf '%sactive%s' "$C_GRN" "$C_OFF")"
-    else
-        printf '  %-22s %s\n' "warm connection" "starts on first narration"
-    fi
-
     if [ -s "$VOICE_CACHE" ]; then
         printf '  %-22s %s\n' "voice catalogue" "$(jq 'length' "$VOICE_CACHE" 2>/dev/null || echo '?') voices cached"
     else
