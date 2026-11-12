@@ -184,8 +184,10 @@ through `mpg123 -m -r 24000 -s`, forcing mono and 24 kHz so the player pipeline
 never has to know about the service's format.
 
 **Rate.** speech-dispatcher's `-100..100` rate is mapped to edge-tts's
-`[+-]N%`; out-of-range values are clamped. Pitch and volume are currently left
-at speech-dispatcher's defaults.
+`[+-]N%`; out-of-range values are clamped. The module config must use
+`GenericRateMultiply 100`, not `1`: DotConf has no float type, so `sd_generic`
+divides the value by 100 as soon as it is read. Pitch and volume are currently
+left at speech-dispatcher's defaults.
 
 ## How it works
 
@@ -244,6 +246,11 @@ generated `edge-tts.conf` should contain:
 GenericMaxChunkLength 65536
 GenericDelimiters "|"
 ```
+
+**Narration speed does not change.** Firefox's speed slider arrives at
+speech-dispatcher as `-100..100`, but a mis-scaled `GenericRateMultiply` makes
+every value look the same. Re-run `--install` (the generated `edge-tts.conf`
+should say `GenericRateMultiply 100`), then restart Firefox.
 
 **Nothing is spoken, or `--test` reports no audio.** Check the network and the
 service:

@@ -36,12 +36,15 @@ done
 
 # speech-dispatcher sends -100..100. edge-tts wants [+-]N%, including an
 # explicit sign for zero. Clamp so the output stays intelligible.
-case "$RATE" in
-    '') RATE=0 ;;
-esac
-if [[ ! "$RATE" =~ ^[-+]?[0-9]+$ ]]; then
+#
+# sd_generic normally passes an integer, but depending on GenericRateForceInteger
+# and the rate multiplier it can pass a decimal ("50.00"). Accept both instead of
+# treating the decimal as unparseable and silently resetting to normal speed.
+if ! [[ "$RATE" =~ ^[-+]?[0-9]+([.][0-9]+)?$ ]]; then
     RATE=0
 fi
+RATE=${RATE%%.*}
+RATE=${RATE#+}
 [ "$RATE" -lt -100 ] && RATE=-100
 [ "$RATE" -gt 100 ] && RATE=100
 if [ "$RATE" -lt 0 ]; then

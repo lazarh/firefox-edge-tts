@@ -115,10 +115,20 @@ GenericDefaultCharset "utf-8"
 GenericLanguage "$lang_short" "${locale//-/_}" "utf-8"
 
 # Map speech-dispatcher's rate/pitch/volume onto the values edge-speak expects.
-GenericRateMultiply 1
-GenericRateAdd 1
-GenericPitchMultiply 1
-GenericVolumeMultiply 1
+#
+# DotConf has no float type: sd_generic divides every Generic*Multiply value by
+# 100. Writing 100 means 1.0 (identity); writing 1 means 0.01, which squashes
+# every rate into 0.00..2.00. ForceInteger keeps the substituted rate a plain
+# integer such as 50 rather than 50.00.
+GenericRateMultiply 100
+GenericRateAdd 0
+GenericRateForceInteger 1
+GenericPitchMultiply 100
+GenericPitchAdd 0
+GenericPitchForceInteger 1
+GenericVolumeMultiply 100
+GenericVolumeAdd 0
+GenericVolumeForceInteger 1
 
 AddVoice "$lang_short" "$gender" "$voice"
 DefaultVoice "$voice"
