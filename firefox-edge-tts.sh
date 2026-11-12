@@ -17,6 +17,9 @@
 #   firefox-edge-tts.sh --install          install (interactive voice menu)
 #   firefox-edge-tts.sh --install --voice bg-BG-BorislavNeural   pick a voice directly
 #   firefox-edge-tts.sh --install          non-interactively, using the default voice
+#   firefox-edge-tts.sh --install --pause 300   set silence after each paragraph (ms)
+#   firefox-edge-tts.sh --set-pause 300    change the paragraph pause later
+#   firefox-edge-tts.sh --set-pause natural   use edge-tts's own trailing silence
 #   firefox-edge-tts.sh --list-voices      voices in the cached catalogue
 #   firefox-edge-tts.sh --refresh-voices   refresh the cached voice catalogue
 #   firefox-edge-tts.sh --status           what is installed
@@ -72,7 +75,7 @@ usage() {
 
 # Install: preflight -> dependencies -> runtime -> voice -> configure -> verify.
 do_install() {
-    local voice="${1:-}"
+    local voice="${1:-}" pause="${2:-}"
 
     require_debian13
     require_espeak_fallback
@@ -93,7 +96,15 @@ do_install() {
 
     validate_voice "$voice"
 
-    configure_speech_dispatcher "$voice"
+    # Keep the previous pause setting when --pause is not given, so a re-install
+    # to change the voice does not silently reset it.
+    if [ -z "$pause" ]; then
+        pause=$(state_get pause 2>/dev/null || true)
+    fi
+    pause=$(normalize_pause "$pause") \
+        || die "--pause must be milliseconds (0-10000) or 'natural'"
+
+    configure_speech_dispatcher "$voice" "$pause"
     restart_speech_dispatcher
 
     local lang
@@ -126,7 +137,7 @@ configured_voice() {
 main() {
     # No arguments shows help rather than installing. Installing needs network
     # and rewrites the user's speech-dispatcher config, so it must be asked for.
-    local command="help" voice="" uninstall_args=()
+    local command="help" voice="" pause="" pause_given=no uninstall_args=()
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -138,6 +149,15 @@ main() {
             --list-voices) command="list-voices"; shift ;;
             --refresh-voices) command="refresh-voices"; shift ;;
             --cleanup-piper) command="cleanup-piper"; shift ;;
+            --pause)
+                [ $# -ge 2 ] || die "--pause needs a value in milliseconds (or 'natural')"
+                pause="$2"; pause_given=yes; shift 2 ;;
+            --pause=*)   pause="${1#*=}"; pause_given=yes; shift ;;
+            --set-pause)
+                [ $# -ge 2 ] || die "--set-pause needs a value in milliseconds (or 'natural')"
+                pause="$2"; pause_given=yes; command="set-pause"; shift 2 ;;
+            --set-pause=*)
+                pause="${1#*=}"; pause_given=yes; command="set-pause"; shift ;;
             --voice)
                 [ $# -ge 2 ] || die "--voice needs a voice name, e.g. bg-BG-BorislavNeural"
                 voice="$2"; command="install"; shift 2 ;;
@@ -150,12 +170,23 @@ main() {
         esac
     done
 
+    if [ "$pause_given" = yes ] && [ "$command" = help ]; then
+        die "--pause is an install option; use --set-pause to change an existing install"
+    fi
+
     case "$command" in
         help)
             usage
             ;;
         install)
-            do_install "$voice"
+            do_install "$voice" "$pause"
+            ;;
+        set-pause)
+            require_debian13
+            local normalized
+            normalized=$(normalize_pause "$pause") \
+                || die "--set-pause must be milliseconds (0-10000) or 'natural'"
+            set_pause_value "$normalized"
             ;;
         uninstall)
             uninstall_all ${uninstall_args[@]+"${uninstall_args[@]}"}

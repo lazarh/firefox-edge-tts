@@ -63,6 +63,8 @@ narrate.
 | --- | --- |
 | `--install` | Install edge-tts, fetch the voice catalogue, and configure speech-dispatcher |
 | `--install --voice NAME` | Install without the interactive menu, e.g. `bg-BG-BorislavNeural` |
+| `--install --pause MS` | Set the silence after each paragraph (`0`–`10000` ms, or `natural`) |
+| `--set-pause MS` | Change the paragraph pause on an existing install |
 | `--set-firefox-voice` | Point Firefox's Narrate at edge-tts (**close Firefox first**) |
 | `--test` | Verify the chain end to end |
 | `--status` | Show what is installed |
@@ -90,7 +92,7 @@ Running the script with no arguments prints this help.
 | --- | --- |
 | `~/.local/share/edge-tts/venv/` | Private Python environment holding `edge-tts` |
 | `~/.local/share/edge-tts/bin/edge-tts` | Generated wrapper that execs the venv |
-| `~/.local/share/edge-tts/edge-speak` | Generated bridge: text → edge-tts → mpg123 → raw PCM |
+| `~/.local/share/edge-tts/edge-speak` | Generated bridge: text → edge-tts → mpg123 → pause trim → raw PCM |
 | `~/.cache/firefox-edge-tts/voices.json` | Cached voice catalogue |
 | `~/.config/speech-dispatcher/speechd.conf` | Generated main config (prior one backed up) |
 | `~/.config/speech-dispatcher/modules/edge-tts.conf` | Generated `sd_generic` module config |
@@ -118,6 +120,46 @@ catalogue short name to use another, for example `bg-BG-KalinaNeural` or
 Gender and locale from the catalogue decide the speech-dispatcher voice type
 (`MALE1`, `FEMALE1`, …) and the language Firefox matches on. The voice is
 registered under the bare language code (`bg`), not the full locale.
+
+## Paragraph pauses
+
+Firefox sends each paragraph to speech-dispatcher as a separate utterance and
+starts the next one as soon as the previous `end` event arrives. Neither Firefox
+nor speech-dispatcher has a setting for silence between paragraphs.
+
+The gap you hear is therefore made of two parts:
+
+- **Trailing silence in the audio.** edge-tts normally leaves roughly 0.7–0.9 s
+  of silence at the end of every request.
+- **Startup latency for the next paragraph.** speech-dispatcher runs the synth
+  command separately for each utterance, so the next paragraph waits for a new
+  edge-tts process, a new TLS connection, and the first audio chunk — about
+  1–2 s (longer on the first request).
+
+`--pause` controls the first part exactly. It trims or pads the end of each
+paragraph to the requested number of milliseconds, while leaving pauses inside
+the paragraph untouched:
+
+```sh
+# 250 ms of silence after each paragraph
+./firefox-edge-tts.sh --install --pause 250
+
+# change it later without touching the voice or Firefox
+./firefox-edge-tts.sh --set-pause 250
+
+# remove the service's tail entirely
+./firefox-edge-tts.sh --set-pause 0
+
+# stop filtering; use edge-tts's own trailing silence (default)
+./firefox-edge-tts.sh --set-pause natural
+```
+
+The value is stored in the install state and survives a later `--install`
+that changes the voice. `--status` shows the current setting.
+
+`--pause` cannot make the gap shorter than the next request's startup latency.
+Even at `--pause 0`, the next paragraph still starts with roughly a second of
+silence while edge-tts connects and produces its first chunk.
 
 ## Latency
 
@@ -251,6 +293,12 @@ GenericDelimiters "|"
 speech-dispatcher as `-100..100`, but a mis-scaled `GenericRateMultiply` makes
 every value look the same. Re-run `--install` (the generated `edge-tts.conf`
 should say `GenericRateMultiply 100`), then restart Firefox.
+
+**The pause between paragraphs is too long or too short.** Set it explicitly
+with `--set-pause MS` (0–10000 ms), or use `--set-pause natural` to keep
+edge-tts's own tail. Values below the next request's startup latency still wait
+about a second before the next paragraph begins. See [Paragraph
+pauses](#paragraph-pauses).
 
 **Nothing is spoken, or `--test` reports no audio.** Check the network and the
 service:

@@ -57,14 +57,23 @@ install_speak_wrapper() {
     tmp=$(mktemp "$EDGE_SPEAK.XXXXXX") || die "cannot write to $EDGE_HOME"
     sed -e "s|__EDGE_BIN__|$EDGE_VENV/bin/edge-tts|g" \
         -e "s|__MPG123__|$mpg123_bin|g" \
+        -e "s|__PYTHON__|$EDGE_VENV/bin/python|g" \
         "$SCRIPT_DIR/lib/edge-speak.sh.in" > "$tmp"
     chmod +x "$tmp"
     mv "$tmp" "$EDGE_SPEAK" || { rm -f "$tmp"; die "could not install $EDGE_SPEAK"; }
 }
 
 write_module_config() {
-    local voice=$1 play_cmd=$2 locale=$3 gender=$4
+    local voice=$1 play_cmd=$2 locale=$3 gender=$4 pause=${5:-natural}
     local lang_short="${locale%%-*}"
+    local pause_opt=""
+
+    # "natural" (or empty) leaves edge-tts's own trailing silence alone. Any
+    # number is passed through so the bridge trims or pads the tail to that many
+    # milliseconds. pause is validated before it reaches this function.
+    if [ -n "$pause" ] && [ "$pause" != "natural" ]; then
+        pause_opt=" --pause $pause"
+    fi
 
     # Register the voice under the BARE language subtag, not the full locale.
     #
@@ -89,7 +98,7 @@ Debug 0
 # Feed the utterance to edge-speak on stdin; it returns raw s16le PCM, which
 # \$PLAY_COMMAND plays. edge-tts errors go to stderr and appear in the module log.
 GenericExecuteSynth \
-"printf %s '\$DATA' | '$EDGE_SPEAK' --voice '$voice' --rate \$RATE | $play_cmd"
+"printf %s '\$DATA' | '$EDGE_SPEAK' --voice '$voice' --rate \$RATE$pause_opt | $play_cmd"
 
 GenericCmdDependency "$EDGE_SPEAK"
 GenericSoundIconFolder "/usr/share/sounds/sound-icons/"
@@ -211,20 +220,34 @@ CONF
 }
 
 record_state() {
-    local voice_key=$1 locale=$2 gender=$3 had_backup=$4
+    local voice_key=$1 locale=$2 gender=$3 had_backup=$4 pause=${5:-natural}
     cat > "$SPD_STATE" <<STATE
 voice=$voice_key
 lang=$locale
 gender=$gender
 backup=$had_backup
+pause=$pause
 module_conf=$SPD_EDGE_CONF
 main_conf=$SPD_CONF
 installed_by=firefox-edge-tts
 STATE
 }
 
+# Accept "natural" (leave the service's tail alone) or a 0..10000 ms target.
+# Prints the normalized value; returns nonzero on anything else.
+normalize_pause() {
+    case "${1:-natural}" in
+        ''|natural|default) printf 'natural' ;;
+        *[!0-9]*) return 1 ;;
+        *)
+            [ "$1" -le 10000 ] || return 1
+            printf '%s' "$1"
+            ;;
+    esac
+}
+
 configure_speech_dispatcher() {
-    local voice_key=$1
+    local voice_key=$1 pause=${2:-natural}
     local idx locale gender play_cmd had_backup=no
 
     idx=$(voices_index)
@@ -241,11 +264,30 @@ configure_speech_dispatcher() {
     dim "player: $play_cmd"
     dim "sample rate: $EDGE_SAMPLE_RATE Hz"
 
-    write_module_config "$voice_key" "$play_cmd" "$locale" "$gender"
+    write_module_config "$voice_key" "$play_cmd" "$locale" "$gender" "$pause"
     write_main_config "${locale%%-*}"
-    record_state "$voice_key" "$locale" "$gender" "$had_backup"
+    record_state "$voice_key" "$locale" "$gender" "$had_backup" "$pause"
 
     ok "speech-dispatcher configured"
+}
+
+# Update only the pause setting of an existing install, without touching the
+# voice, Firefox prefs, or the edge-tts runtime.
+set_pause_value() {
+    local pause=$1 voice locale gender
+
+    voice=$(state_get voice 2>/dev/null || true)
+    [ -n "$voice" ] || die "nothing configured yet; run: $0 --install"
+
+    locale=$(state_get lang 2>/dev/null || true)
+    gender=$(state_get gender 2>/dev/null || true)
+    [ -n "$locale" ] && [ -n "$gender" ] \
+        || die "install state is incomplete; re-run: $0 --install"
+
+    info "setting paragraph pause to $pause"
+    configure_speech_dispatcher "$voice" "$pause"
+    restart_speech_dispatcher
+    ok "paragraph pause updated"
 }
 
 # The daemon's comm is truncated to 15 chars ("speech-dispatche"), so `pgrep -x

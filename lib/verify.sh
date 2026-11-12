@@ -15,7 +15,7 @@ test_phrase_for_lang() {
 # Checks the wrapper directly (fast, no daemon) and then via spd-say (end-to-end).
 test_voice() {
     local voice_key=$1 lang="${2:-$TEST_LANG}"
-    local phrase bytes logdir
+    local phrase bytes logdir pause pause_arg=()
 
     log ""
     info "testing $voice_key"
@@ -28,8 +28,14 @@ test_voice() {
 
     phrase=$(test_phrase_for_lang "$lang")
 
+    # Exercise the same pause setting the module will use.
+    pause=$(state_get pause 2>/dev/null || true)
+    if [ -n "$pause" ] && [ "$pause" != "natural" ]; then
+        pause_arg=(--pause "$pause")
+    fi
+
     # 1. Direct wrapper check: real audio bytes from the online service.
-    bytes=$(printf '%s' "$phrase" | "$EDGE_SPEAK" --voice "$voice_key" 2>/dev/null | wc -c)
+    bytes=$(printf '%s' "$phrase" | "$EDGE_SPEAK" --voice "$voice_key" ${pause_arg[@]+"${pause_arg[@]}"} 2>/dev/null | wc -c)
     if [ "${bytes:-0}" -lt 1000 ]; then
         logdir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/speech-dispatcher/log"
         err "edge-tts produced no usable audio (${bytes} bytes)"
@@ -119,7 +125,7 @@ show_status() {
         printf '  %-22s %s\n' "speech-dispatcher" "$(printf '%snot configured%s' "$C_YLW" "$C_OFF")"
     fi
 
-    local voice locale gender
+    local voice locale gender pause
     voice=$(state_get voice 2>/dev/null || true)
     if [ -n "$voice" ]; then
         locale=$(state_get lang 2>/dev/null || true)
@@ -127,6 +133,13 @@ show_status() {
         printf '  %-22s %s\n' "configured voice" "$voice (${locale:-?}, ${gender:-?})"
     else
         printf '  %-22s %s\n' "configured voice" "$(printf '%snone%s' "$C_YLW" "$C_OFF")"
+    fi
+
+    pause=$(state_get pause 2>/dev/null || true)
+    if [ -z "$pause" ] || [ "$pause" = "natural" ]; then
+        printf '  %-22s %s\n' "paragraph pause" "service default (natural)"
+    else
+        printf '  %-22s %s\n' "paragraph pause" "${pause} ms after each paragraph"
     fi
 
     if [ -s "$VOICE_CACHE" ]; then

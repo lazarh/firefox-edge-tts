@@ -15,11 +15,17 @@ set -uo pipefail
 
 VOICE=""
 RATE="0"
+PAUSE=""
 
 usage() {
     cat >&2 <<'USAGE'
-usage: edge-speak --voice <short-name> [--rate <-100..100>]
+usage: edge-speak --voice <short-name> [--rate <-100..100>] [--pause <ms>|natural]
 Reads text on stdin, writes raw s16le 24 kHz mono audio to stdout.
+
+  --pause <ms>   leave exactly <ms> of silence after the last audible sample
+                 (0 trims it entirely, 10000 is the maximum)
+  --pause natural
+                 pass the service's own trailing silence through (default)
 USAGE
 }
 
@@ -27,6 +33,9 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --voice) VOICE="${2:-}"; shift 2 ;;
         --rate)  RATE="${2:-0}"; shift 2 ;;
+        --pause)
+            [ $# -ge 2 ] || { printf 'edge-speak: --pause needs a value\n' >&2; exit 2; }
+            PAUSE="$2"; shift 2 ;;
         --help|-h) usage; exit 0 ;;
         *) printf 'edge-speak: unknown argument: %s\n' "$1" >&2; exit 2 ;;
     esac
@@ -53,10 +62,78 @@ else
     rate_arg="+${RATE}%"
 fi
 
+# --pause sets the silence left after the last audible sample. "natural" (the
+# default) leaves the service's audio untouched. A number trims or pads the tail
+# to that many milliseconds. This controls the silence after the voice, not the
+# total gap between paragraphs: the next paragraph still pays edge-tts startup.
+if [ -n "$PAUSE" ] && [ "$PAUSE" != "natural" ]; then
+    if ! [[ "$PAUSE" =~ ^[0-9]+$ ]] || [ "$PAUSE" -gt 10000 ]; then
+        printf 'edge-speak: --pause must be milliseconds (0-10000) or "natural"\n' >&2
+        exit 2
+    fi
+fi
+
 text=$(cat) || exit 1
 # An empty utterance is not an error; just produce no audio.
 [ -n "${text//[[:space:]]/}" ] || exit 0
 
-printf '%s' "$text" \
-    | "__EDGE_BIN__" -f - -v "$VOICE" --rate="$rate_arg" --no-progress --write-media - \
-    | "__MPG123__" -q -m -r 24000 -s -
+synthesize() {
+    printf '%s' "$text" \
+        | "__EDGE_BIN__" -f - -v "$VOICE" --rate="$rate_arg" --no-progress --write-media - \
+        | "__MPG123__" -q -m -r 24000 -s -
+}
+
+# Rewrite the final run of silence to exactly $1 milliseconds. A sample counts
+# as silence when it is within +/-32 (about -60 dBFS). Quiet runs are held until
+# the next audible sample, so pauses inside a paragraph pass through unchanged;
+# only the trailing run is trimmed or padded. Streaming is preserved: at most
+# the current quiet run is buffered.
+trim_trailing_silence() {
+    local script
+    script=$(cat <<'PY'
+import sys
+from array import array
+
+target_ms = int(sys.argv[1])
+rate = 24000
+target_bytes = (target_ms * rate // 1000) * 2
+threshold = 32
+pending = bytearray()
+out = sys.stdout.buffer
+
+while True:
+    chunk = sys.stdin.buffer.read(65536)
+    if not chunk:
+        break
+    if len(chunk) % 2:
+        chunk += sys.stdin.buffer.read(1)
+    samples = array('h')
+    samples.frombytes(chunk)
+    if sys.byteorder == 'big':
+        samples.byteswap()
+    for value in samples:
+        if -threshold <= value <= threshold:
+            pending += value.to_bytes(2, 'little', signed=True)
+        else:
+            if pending:
+                out.write(pending)
+                pending = bytearray()
+            out.write(value.to_bytes(2, 'little', signed=True))
+
+# Keep the start of the natural decay when trimming, and pad with digital
+# silence when the service left less than the requested pause.
+if len(pending) >= target_bytes:
+    out.write(pending[:target_bytes])
+else:
+    out.write(pending)
+    out.write(b'\x00\x00' * ((target_bytes - len(pending)) // 2))
+PY
+)
+    "__PYTHON__" -c "$script" "$1"
+}
+
+if [ -n "$PAUSE" ] && [ "$PAUSE" != "natural" ]; then
+    synthesize | trim_trailing_silence "$PAUSE"
+else
+    synthesize
+fi
