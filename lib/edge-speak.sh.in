@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Edge TTS speech-dispatcher bridge.
+#
+# speech-dispatcher's sd_generic module pipes text to a synthesis command and
+# plays the result. Rather than embed a fragile nested-quote pipeline in the
+# module config, this thin wrapper owns the synthesis; the module config just
+# feeds it text on stdin and sends raw PCM to $PLAY_COMMAND.
+#
+# edge-tts returns MP3 at 24 kHz mono. mpg123 decodes that to signed 16-bit
+# little-endian PCM on stdout, forcing mono and 24 kHz even if the service's
+# format ever changes. edge-tts diagnostics stay on stderr so they never
+# corrupt the audio stream.
+
+set -uo pipefail
+
+VOICE=""
+RATE="0"
+
+usage() {
+    cat >&2 <<'USAGE'
+usage: edge-speak --voice <short-name> [--rate <-100..100>]
+Reads text on stdin, writes raw s16le 24 kHz mono audio to stdout.
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --voice) VOICE="${2:-}"; shift 2 ;;
+        --rate)  RATE="${2:-0}"; shift 2 ;;
+        --help|-h) usage; exit 0 ;;
+        *) printf 'edge-speak: unknown argument: %s\n' "$1" >&2; exit 2 ;;
+    esac
+done
+
+[ -n "$VOICE" ] || { printf 'edge-speak: --voice is required\n' >&2; exit 2; }
+
+# speech-dispatcher sends -100..100. edge-tts wants [+-]N%, including an
+# explicit sign for zero. Clamp so the output stays intelligible.
+case "$RATE" in
+    '') RATE=0 ;;
+esac
+if [[ ! "$RATE" =~ ^[-+]?[0-9]+$ ]]; then
+    RATE=0
+fi
+[ "$RATE" -lt -100 ] && RATE=-100
+[ "$RATE" -gt 100 ] && RATE=100
+if [ "$RATE" -lt 0 ]; then
+    rate_arg="-${RATE#-}%"
+else
+    rate_arg="+${RATE}%"
+fi
+
+text=$(cat) || exit 1
+# An empty utterance is not an error; just produce no audio.
+[ -n "${text//[[:space:]]/}" ] || exit 0
+
+printf '%s' "$text" \
+    | "__EDGE_BIN__" -f - -v "$VOICE" --rate="$rate_arg" --no-progress --write-media - \
+    | "__MPG123__" -q -m -r 24000 -s -

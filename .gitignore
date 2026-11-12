@@ -1,0 +1,5 @@
+# Local sandbox and scratch used while developing the script.
+.scratch/
+
+# Screenshots and other incidental captures.
+*.png
