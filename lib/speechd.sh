@@ -305,6 +305,13 @@ spd_daemon_running() {
 restart_speech_dispatcher() {
     spd_daemon_running || { dim "speech-dispatcher not running; it will start on demand"; return 0; }
 
+    # Restarting the daemon breaks every connected client. Firefox opens its
+    # speech-dispatcher connection once at startup (SpeechDispatcherService::Setup)
+    # and never reopens it, so Narrate stays silent until the browser restarts.
+    if firefox_running; then
+        warn "Firefox is running: close and reopen it after this command, or Narrate will stay silent"
+    fi
+
     info "restarting speech-dispatcher"
     # Match only the daemon itself, never a caller that merely mentions
     # "speech-dispatcher" on its command line (e.g. this script), and never the

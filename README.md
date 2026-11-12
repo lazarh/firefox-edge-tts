@@ -157,6 +157,13 @@ the paragraph untouched:
 The value is stored in the install state and survives a later `--install`
 that changes the voice. `--status` shows the current setting.
 
+**Restart Firefox after changing the pause.** `--set-pause` restarts
+speech-dispatcher so it reloads the module config. Firefox opens its
+speech-dispatcher connection once at startup and never reopens it, so an
+already-running Firefox loses Narrate entirely until you close and reopen it.
+The script warns when it detects this. For the smoothest sequence, close
+Firefox first, run `--set-pause`, then reopen Firefox.
+
 `--pause` cannot make the gap shorter than the next request's startup latency.
 Even at `--pause 0`, the next paragraph still starts with roughly a second of
 silence while edge-tts connects and produces its first chunk.
@@ -299,6 +306,11 @@ with `--set-pause MS` (0–10000 ms), or use `--set-pause natural` to keep
 edge-tts's own tail. Values below the next request's startup latency still wait
 about a second before the next paragraph begins. See [Paragraph
 pauses](#paragraph-pauses).
+
+**Narration stops working right after `--set-pause` (or `--install`).** Those
+commands restart speech-dispatcher, which drops Firefox's existing connection;
+Firefox only reconnects when it starts up. Close and reopen Firefox. To avoid
+the interruption, close Firefox *before* running the command.
 
 **Nothing is spoken, or `--test` reports no audio.** Check the network and the
 service:
