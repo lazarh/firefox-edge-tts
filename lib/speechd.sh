@@ -47,6 +47,28 @@ detect_play_command() {
     fi
 }
 
+# An earlier build kept a warm websocket in a background daemon (edge-ttsd.py).
+# It is no longer used: long-lived connections stalled unpredictably. Remove any
+# leftover process and files when the user re-installs or uninstalls, so no
+# stray websocket to Microsoft survives.
+remove_legacy_daemon() {
+    local pid_file="$EDGE_HOME/tts.sock.pid" pid waited=0
+    if [ -f "$pid_file" ]; then
+        pid=$(cat "$pid_file" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
+           && tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q 'edge-ttsd.py --serve'; then
+            kill "$pid" 2>/dev/null || true
+            while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
+                sleep 0.1
+                waited=$((waited + 1))
+            done
+        fi
+    fi
+    rm -f "$EDGE_HOME/edge-ttsd.py" \
+          "$EDGE_HOME/tts.sock" "$pid_file" \
+          "$EDGE_HOME/tts.sock.lock" "$EDGE_HOME/tts.sock.log"
+}
+
 # Install the generated edge-speak wrapper, with runtime paths baked in.
 install_speak_wrapper() {
     local mpg123_bin tmp
@@ -259,6 +281,7 @@ configure_speech_dispatcher() {
 
     info "configuring per-user speech-dispatcher (voice: $voice_key, locale: $locale)"
 
+    remove_legacy_daemon
     install_speak_wrapper
     play_cmd=$(detect_play_command)
     dim "player: $play_cmd"

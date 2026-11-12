@@ -165,16 +165,22 @@ The script warns when it detects this. For the smoothest sequence, close
 Firefox first, run `--set-pause`, then reopen Firefox.
 
 `--pause` cannot make the gap shorter than the next request's startup latency.
-Even at `--pause 0`, the next paragraph still starts with roughly a second of
-silence while edge-tts connects and produces its first chunk.
+For the shortest reliable gap use `--set-pause 0`: it removes Microsoft's
+~0.8 s tail, leaving roughly 1–2 s while the next `edge-tts` process starts and
+produces its first audio chunk. A larger value (e.g. `800`) gives a more
+deliberate break. There is no setting that removes the startup cost itself.
 
 ## Latency
 
-The first word arrives after roughly 1 second on a warm connection, and after
-about 2–3 seconds on the first request. This is higher than Piper's ~0.4 s
-model-load time because each utterance starts a new Python process and a new
-request to Microsoft. Streaming is progressive — audio starts before the whole
-clip has arrived — so articles remain usable, but short strings feel slower.
+Each utterance starts a fresh Python process and a fresh request to Microsoft,
+so the first word arrives after roughly 1–2 s (longer on the first request of a
+session). This is higher than Piper's ~0.4 s model-load time. Streaming is
+progressive — audio starts before the whole clip has arrived — so articles
+remain usable, but short strings feel slower.
+
+A warm-connection daemon was tried to remove this per-paragraph cost, but
+long-lived websockets stalled unpredictably (multi-second gaps) and were
+removed. The reliable way to shorten the gap is `--set-pause 0`.
 
 ## Online and privacy caveats
 

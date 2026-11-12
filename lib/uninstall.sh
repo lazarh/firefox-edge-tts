@@ -67,6 +67,10 @@ uninstall_all() {
 
     info "uninstalling edge-tts from speech-dispatcher"
 
+    # 0. Stop a warm daemon left over from an earlier build, before its files
+    #    are deleted, so it cannot keep an idle websocket open.
+    remove_legacy_daemon
+
     # 1. Restore speech-dispatcher first, so narration works again immediately.
     restore_speechd_config
     rm -f "$SPD_EDGE_CONF" "$SPD_STATE"
